@@ -1,0 +1,170 @@
+# Training Configuration for Neural Field Reconstruction
+# Multi-Modal X-Ray CT (Laminography + Tomography)
+
+experiment:
+  name: "multimodal_nerf_v1"
+  output_dir: "experiments/"
+  seed: 42
+  save_dir: "experiments/multimodal_nerf_v1"
+
+# Model architecture
+model:
+  # Bounding box for reconstruction volume (world coordinates)
+  bounds: [[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]]
+
+  # Hash encoding configuration
+  encoding:
+    n_levels: 16
+    n_features_per_level: 2
+    log2_hashmap_size: 19  # 2^19 = 524,288 entries
+    base_resolution: 16
+    finest_resolution: 2048
+    use_tcnn: true  # Use tiny-cuda-nn if available
+
+  # MLP configuration
+  mlp:
+    hidden_dims: [64, 64, 64]  # 3 layers of 64 neurons
+    activation: "relu"
+    output_activation: "relu"  # Positive density
+    use_tcnn: true
+
+# Rendering configuration
+rendering:
+  num_samples: 128  # Samples per ray
+  near: 0.0
+  far: 2.0
+  perturb: true  # Stratified sampling
+  white_background: false
+  use_importance_sampling: false  # Set to true for hierarchical sampling
+
+# Geometry configuration
+geometry:
+  laminography:
+    detector_shape: [2048, 2048]  # [H, W] in pixels
+    pixel_size: 0.65  # micrometers
+    source_detector_distance: 1200.0  # mm
+    source_object_distance: 600.0  # mm
+    tilt_angle: 30.0  # degrees from vertical
+    num_projections: 3600
+    angular_range: 360.0  # degrees
+
+  tomography:
+    detector_shape: [1024, 1024]
+    pixel_size: 1.3  # micrometers (lower resolution)
+    source_detector_distance: 1200.0
+    source_object_distance: 600.0
+    tilt_angle: 90.0  # standard CT
+    num_projections: 1800
+    angular_range: 360.0
+
+# Training configuration
+training:
+  num_iterations: 20000
+  batch_size: 16384  # Rays per iteration (optimal for RTX 6000 Ada)
+
+  # Ray sampling strategy
+  rays_per_modality: 8192  # Split batch equally between modalities
+  sample_all_projections: true  # Sample from all projections uniformly
+
+  # Loss weights
+  loss:
+    type: "multimodal"
+    alpha_lamino: 1.0  # Weight for laminography
+    beta_tomo: 0.5  # Weight for tomography (lower resolution)
+    gamma_tv: 0.01  # Total variation
+    lambda_smooth: 0.001  # Smoothness regularization
+    lambda_sparse: 0.0  # L1 sparsity (optional)
+    data_loss_type: "mse"  # "mse" or "l1"
+
+  # Optimizer
+  optimizer:
+    type: "adam"
+    lr: 0.01  # Initial learning rate
+    betas: [0.9, 0.99]
+    eps: 1.0e-15
+    weight_decay: 0.0
+
+  # Learning rate scheduler
+  scheduler:
+    type: "exponential"
+    gamma: 0.1  # Decay to 0.1 × initial LR
+    decay_steps: 10000  # Over 10k iterations
+
+  # Gradient clipping
+  grad_clip: 1.0
+
+  # Mixed precision training
+  use_amp: true  # Automatic Mixed Precision for 2× speedup
+
+  # Regularization sampling
+  reg_every: 10  # Compute regularization every N iterations
+  reg_samples: 8192  # Number of samples for reg computation
+
+# Data configuration
+data:
+  # Paths to preprocessed data
+  laminography_data: "data/processed/sample_001_lamino.h5"
+  tomography_data: "data/processed/sample_001_tomo.h5"
+
+  # Data loading
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+
+# Logging and checkpointing
+logging:
+  # Weights & Biases
+  use_wandb: false
+  wandb_project: "neural-field-xray"
+  wandb_entity: null  # Your W&B username
+
+  # TensorBoard
+  use_tensorboard: true
+
+  # Logging frequency
+  log_every: 100  # Log metrics every N iterations
+  log_images_every: 500  # Log rendered images
+
+  # Checkpointing
+  checkpoint_every: 1000  # Save checkpoint every N iterations
+  keep_last_n_checkpoints: 5
+  save_best: true  # Save best model based on validation loss
+
+# Validation
+validation:
+  enabled: true
+  eval_every: 500  # Evaluate every N iterations
+  num_eval_rays: 4096  # Rays for validation rendering
+  compute_metrics: true  # Compute PSNR, SSIM
+  render_full_projection: false  # Render full projection (slow)
+
+# Hardware
+hardware:
+  device: "cuda"  # "cuda" or "cpu"
+  gpu_id: 0  # GPU device ID
+
+  # Performance settings
+  torch_compile: true  # Use torch.compile() for ~20% speedup (PyTorch 2.0+)
+  cudnn_benchmark: true  # cuDNN autotuning
+
+  # Memory management
+  empty_cache_every: 100  # Clear CUDA cache every N iterations
+
+# Reproducibility
+reproducibility:
+  deterministic: false  # Set to true for full reproducibility (slower)
+  benchmark: true
+
+# Advanced options
+advanced:
+  # Gradient accumulation (if batch doesn't fit in memory)
+  gradient_accumulation_steps: 1
+
+  # Learning rate warmup
+  warmup_steps: 0  # No warmup by default
+
+  # Early stopping
+  early_stopping:
+    enabled: false
+    patience: 5000
+    min_delta: 1e-5
